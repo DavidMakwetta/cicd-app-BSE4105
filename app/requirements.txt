@@ -1,0 +1,5 @@
+Flask==2.3.3
+Werkzeug==2.3.7
+psycopg2-binary==2.9.6  # PostgreSQL connector
+pytest==7.4.0           # Testing framework
+pytest-flask==1.2.0
