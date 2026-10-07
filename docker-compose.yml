@@ -1,17 +1,17 @@
 services:
-  $USER-web:
+  buyinza-web:
     build: ./app
     volumes:
       - ./app:/app
     ports:
-      - "30XXX:5000" # please change the host port number as per class instructions
+      - "30134:5000" # please change the host port number as per class instructions
     depends_on:
-      - $USER-db
+      - buyinza-db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: bse4105
       POSTGRES_DB: userdb
-      POSTGRES_HOST: $USER-db
+      POSTGRES_HOST: buyinza-db
       POSTGRES_PORT: 5432
     deploy:
       resources:
@@ -19,17 +19,17 @@ services:
           cpus: '0.50'
           memory: 256M
 
-  $USER-db:
+  buyinza-db:
     image: postgres:15
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: bse4105
-      POSTGRES_DB: userdb
+      POSTGRES_DB: buyinzadb
     volumes:
       - ./db_data:/var/lib/postgresql/data
       - ./db_init:/docker-entrypoint-initdb.d
     ports:
-      - "31XXX:5432" # please change the host port number as per class instructions
+      - "31134:5432" # please change the host port number as per class instructions
     deploy:
       resources:
         limits:
