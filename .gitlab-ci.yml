@@ -12,7 +12,8 @@ variables:
 image: docker:24.0.7
 
 services:
-  - postgres:15
+  - name: postgres:15
+    alias: postgres
 
 before_script:
   - docker info
@@ -28,30 +29,18 @@ build:
 
 test:
   stage: test
+  variables:
+    POSTGRES_USER: "postgres"
+    POSTGRES_PASSWORD: "secretpassword"
+    POSTGRES_DB: "test_db"
   script:
     - echo "Running tests"
 
-    #Export GitLab-defined variables
-    - export POSTGRES_USER="${POSTGRES_USER}"
-    - export POSTGRES_PASSWORD="${POSTGRES_PASSWORD}"
-    - export POSTGRES_DB="${POSTGRES_DB}"
-    - export POSTGRES_HOST="${POSTGRES_HOST}"
-    - export POSTGRES_PORT="${POSTGRES_PORT}"
-
-    # Print all important variables
-    - echo "Checking environment variables:"
-    - echo "POSTGRES_USER  = '$POSTGRES_USER'"
-    - echo "POSTGRES_PASSWORD = '$POSTGRES_PASSWORD'"
-    - echo "POSTGRES_DB = '$POSTGRES_DB'"
-    - echo "POSTGRES_HOST = '$POSTGRES_HOST'"
-    - echo "POSTGRES_PORT = '$POSTGRES_PORT'"
-
-    - docker run -d --name db-test -e POSTGRES_USER=$POSTGRES_USER -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD -e POSTGRES_DB=$POSTGRES_DB postgres:15
-
-    # Check PostgreSQL logs for startup messages
-    - echo "Checking PostgreSQL logs..."
-    - sleep 30  # Wait for a few seconds before checking logs
-    - docker logs db-test
+    - docker run -d --name db-test \
+        -e POSTGRES_USER=$POSTGRES_USER \
+        -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+        -e POSTGRES_DB=$POSTGRES_DB \
+        postgres:15
 
     # Wait for PostgreSQL to be ready
     - echo "Waiting for PostgreSQL to start..."
@@ -65,26 +54,34 @@ test:
         sleep 1
       done
 
-    # Copy the SQL file to the PostgreSQL container and execute it
-    - echo "Loading initial data into the database"
-    - docker cp db_init/init.sql db-test:/init.sql
-    - docker exec -u $POSTGRES_USER db-test psql -d $POSTGRES_DB -f /init.sql
+    # Copy the SQL file to the PostgreSQL container and execute it (if init.sql exists)
+    - |
+      if [ -f "db_init/init.sql" ]; then
+        echo "Loading initial data into the database..."
+        docker cp db_init/init.sql db-test:/init.sql
+        docker exec -u $POSTGRES_USER db-test psql -d $POSTGRES_DB -f /init.sql
+      fi
 
-    # Check if users table is created
-    - echo "Checking tables in the database..."
+    # Check tables in the database
     - docker exec db-test psql -U $POSTGRES_USER -d $POSTGRES_DB -c "\dt;"
 
+    # Build and run the app container linked to the database container
     - docker build -t cicd-app ./app
+    - docker run -d --name cicd-app --link db-test:db \
+        -e POSTGRES_USER=$POSTGRES_USER \
+        -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+        -e POSTGRES_DB=$POSTGRES_DB \
+        -e POSTGRES_HOST=db \
+        cicd-app
 
-    - docker run -d --name cicd-app --link db-test:db -e POSTGRES_USER=$POSTGRES_USER -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD -e POSTGRES_DB=$POSTGRES_DB cicd-app
-
+    # Execute tests inside the container
     - docker exec cicd-app pytest
-    
+      
     # Cleanup containers
-    - docker stop cicd-app
-    - docker rm cicd-app
-    - docker stop db-test
-    - docker rm db-test
+    - docker stop cicd-app || true
+    - docker rm cicd-app || true
+    - docker stop db-test || true
+    - docker rm db-test || true
   only:
     - main
 
@@ -95,30 +92,21 @@ deploy:
     - eval $(ssh-agent -s)
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
-    # Store the private key from CI/CD variable
     - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_ecdsa
     - chmod 600 ~/.ssh/id_ecdsa
-    - cat ~/.ssh/id_ecdsa
     - ssh-add ~/.ssh/id_ecdsa
-    # Add the remote server to known_hosts
     - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
     - chmod 644 ~/.ssh/known_hosts
 
   script:
     - echo "Deploying to the production server"
 
-    # Login to GitLab container registry
+    # Login to GitLab container registry, pull latest image, and restart compose services on the remote server
     - ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "
-      echo '$CI_JOB_TOKEN' | docker login -u gitlab-ci-token --password-stdin '$CI_REGISTRY'"
-
-    # Pull the latest image
-    - ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "
-      docker pull '$CI_REGISTRY_IMAGE/cicd-app:latest'"
-
-    # Navigate to deployment directory and start the services
-    - ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "
-      cd '$DEPLOY_HOME/microservices/cicd-app' &&
-      docker-compose up -d --build"
+        echo '$CI_JOB_TOKEN' | docker login -u gitlab-ci-token --password-stdin '$CI_REGISTRY' &&
+        docker pull '$CI_REGISTRY_IMAGE/cicd-app:latest' &&
+        cd '$DEPLOY_HOME/microservices/cicd-app' &&
+        docker-compose up -d --build"
 
   only:
     - main
