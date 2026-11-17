@@ -210,4 +210,134 @@ ls ~/test2026                   # answers.sh check_service.sh data repo INFO.txt
 cd ~/test2026/repo && git status && git log --oneline -5
 docker ps
 curl localhost:<PORT>/health
+# ---------- LOGIN / SETUP ----------
+ssh <username>@ldapgit.cranecloud.io
+cat ~/test2026/INFO.txt
+git config --global user.name "Firstname Lastname"
+git config --global user.email "your@email"
+
+# ---------- PART A ----------
+mkdir ~/test2026
+chmod 700 ~/test2026
+ls -ld ~/test2026
+cp /opt/test2026/<username>/bundle.zip ~/test2026/
+cd ~/test2026
+unzip bundle.zip
+ls -R
+cat INFO.txt
+cat count_lines.sh
+./count_lines.sh data/access.log
+nano answers.sh
+cat answers.sh
+bash answers.sh
+
+# a3
+awk '$9 ~ /^5[0-9][0-9]$/ {c++} END {print c+0}' data/access.log
+# a4
+awk '{print $1}' data/access.log | sort | uniq -c | sort -rn | head -1 | awk '{print $2}'
+# a5
+tail -n +2 data/services.csv | awk -F, '$6=="down" {print $1}' | sort
+# a6
+awk '$9==404 {print $1}' data/access.log | sort -u | wc -l
+
+# a7
+nano check_service.sh
+awk -F, -v n="$name" 'NR>1 && $1==n {print $1 " is " $6 " on port " $3; exit}' data/services.csv
+chmod +x check_service.sh
+./check_service.sh billing; echo $?
+./check_service.sh; echo $?
+./check_service.sh nosuch; echo $?
+./check_service.sh cache
+
+# ---------- PART B ----------
+man ssh-keygen
+ssh-keygen -t ed25519 -C "<username>-test2026"
+cat ~/.ssh/id_ed25519.pub
+ssh -T git@gitlab.cranecloud.io
+
+cd ~/test2026
+git clone git@gitlab.cranecloud.io:bse4105-test-2026/test-<username>.git repo
+cd repo
+git branch -a
+
+git checkout main
+git checkout -b test-2026
+git push -u origin test-2026
+
+git merge origin/hotfix        # or: git merge hotfix
+git status
+nano config/settings.ini
+grep -n '<<<<\|====\|>>>>' config/settings.ini
+git add config/settings.ini
+git commit -m "Merge hotfix into test-2026"
+git push
+
+cd ~/test2026/repo
+printf "Full name: Your Full Name\nStudent number: 0000000\n" > STUDENT.md
+git add STUDENT.md
+git commit -m "Add STUDENT.md" -m "Adds my full name and student number for the 2026 test."
+git push
+git log -1
+
+# ---------- PART C ----------
+nano Dockerfile
+docker build -t test-local .
+docker run -d --name tmp-test -p <PORT>:5000 test-local
+curl localhost:<PORT>
+docker rm -f tmp-test
+
+nano app.py
+nano test_app.py
+pip install -r requirements.txt pytest
+pytest
+
+nano .gitlab-ci.yml
+# CI script commands used inside .gitlab-ci.yml:
+docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+docker build -t $CI_REGISTRY_IMAGE:$IMAGE_TAG .
+docker push $CI_REGISTRY_IMAGE:$IMAGE_TAG
+docker run --rm $CI_REGISTRY_IMAGE:$IMAGE_TAG sh -c "pip install pytest && pytest"
+docker pull $CI_REGISTRY_IMAGE:$IMAGE_TAG
+docker rm -f $CI_PROJECT_NAME || true
+docker run -d --name $CI_PROJECT_NAME -p $APP_PORT:5000 $CI_REGISTRY_IMAGE:$IMAGE_TAG
+
+git add -A
+git commit -m "Fix Dockerfile and CI, add /health and test"
+git push
+docker ps
+curl localhost:<PORT>/health
+
+# C6: break test, push, then fix and push
+nano test_app.py
+git add -A
+git commit -m "Break test on purpose"
+git push
+nano test_app.py
+git add -A
+git commit -m "Fix test"
+git push
+docker ps
+curl localhost:<PORT>/health
+
+# ---------- PART D (commands referenced in questions) ----------
+chmod 700 test2026
+./check_service.sh billing > out.txt 2>&1
+echo $?
+git pull
+git pull --rebase
+git revert <commit>
+git reset --hard HEAD~1
+git push --force
+git checkout <commit>
+git merge hotfix
+docker ps
+docker images
+docker run -p 33012:5000 ...
+ls -ld test2026
+
+# ---------- FINAL CHECK ----------
+ls ~/test2026
+cd ~/test2026/repo && git status && git log --oneline -5
+docker ps
+curl localhost:<PORT>/health
 
