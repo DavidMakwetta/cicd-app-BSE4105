@@ -1,3 +1,213 @@
 # cicd-app
 
 This session will demonstrate the use of GitLab CI/CD to build and deploy a simple web application. The application is a simple flask app that requires a database for operation. The CI/CD pipeline will build the application, run tests, and deploy the application to our VM server.
+Log in
+bash
+ssh <username>@ldapgit.cranecloud.io
+bash
+mkdir ~/test2026
+chmod 700 ~/test2026
+ls -ld ~/test2026          # should show drwx------
+bash
+cp /opt/test2026/<username>/bundle.zip ~/test2026/
+cd ~/test2026
+unzip bundle.zip
+ls -R
+cat INFO.txt               # shows your port and project URL
+bash
+cat count_lines.sh
+./count_lines.sh data/access.log
+edit answers.sh (use nano answers.sh or vim answers.sh)
+Log fields: $1 is the IP and $9 is the status code. In services.csv, use -F, with $1 as the name and $6 as the status.
+bash
+a3() {
+  awk '$9 ~ /^5[0-9][0-9]$/ {c++} END {print c+0}' data/access.log
+}
+a4() {
+  awk '{print $1}' data/access.log | sort | uniq -c | sort -rn | head -1 | awk '{print $2}'
+}
+a5() {
+  tail -n +2 data/services.csv | awk -F, '$6=="down" {print $1}' | sort
+}
+a6() {
+  awk '$9==404 {print $1}' data/access.log | sort -u | wc -l}
+Test them:
+bash
+cat answers.sh             # see how the functions are called
+nbash answers.sh
+check_service.sh (nano check_service.sh)
+bash
+#!/bin/bash
+if [ $# -lt 1 ]; then
+  echo "Usage: $0 service_name" >&2
+  exit 1
+fi
+name="$1"
+result=$(awk -F, -v n="$name" 'NR>1 && $1==n {print $1 " is " $6 " on port " $3; exit}' data/services.csv)
+if [ -z "$result" ]; then
+  echo "$name not found" >&2
+  exit 2
+fi
+echo "$result"
+exit 0
+bash
+chmod +x check_service.sh
+./check_service.sh billing; echo $?     # prints "billing is up on port 8412", then 0
+./check_service.sh; echo $?             # usage on stderr, then 1
+./check_service.sh nosuch; echo $?      # "nosuch not found" on stderr, then 2
+./check_service.sh cache                # must not match cache-proxy
+Git identity
+bash
+git config --global user.name "Firstname Lastname"
+git config --global user.email "your@email"
+bash
+man ssh-keygen
+ssh-keygen -t ed25519 -C "<username>-test2026"
+cat ~/.ssh/id_ed25519.pub
+Copy the output into GitLab under Profile → Preferences → SSH Keys → Add key, then check it:
+bash
+ssh -T git@gitlab.cranecloud.io
+B2: clone over SSH
+bash
+cd ~/test2026
+git clone git@gitlab.cranecloud.io:bse4105-test-2026/test-<username>.git repo
+cd repo
+git branch -a
+bash
+git checkout main
+git checkout -b test-2026
+git push -u origin test-2026
+B4: merge hotfix and resolve the conflict
+bash
+git merge origin/hotfix        # or: git merge hotfix
+git status
+nano config/settings.ini       # keep log_level = warning and ttl = 300, delete the <<<<<<< ======= >>>>>>> lines
+grep -n '<<<<\|====\|>>>>' config/settings.ini    # should print nothing
+git add config/settings.ini
+git commit -m "Merge hotfix into test-2026"
+git push
+B5: STUDENT.md with a multi-line commit message
+bash
+cd ~/test2026/repo
+printf "Full name: Your Full Name\nStudent number: 0000000\n" > STUDENT.md
+git add STUDENT.md
+git commit -m "Add STUDENT.md" -m "Adds my full name and student number for the 2026 test."
+git push
+git log -1
+B6: merge request (GitLab web UI, not a command)
+Open your project, go to Merge requests → New merge request.
+Set source test-2026 and target main.
+Title: Test 2026 – <username> (with the en dash).
+Write a description of your changes, then click Create merge request.
+Do not merge it, and do not delete any branch.
+Part C: Docker and CI/CD
+C1: fix the Dockerfile (typical correct form; compare with yours)
+dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 5000
+CMD ["python", "app.py"]
+Check that app.py ends with app.run(host="0.0.0.0", port=5000). Test it locally:
+bash
+cd ~/test2026/repo
+docker build -t test-local .
+docker run -d --name tmp-test -p <PORT>:5000 test-local
+curl localhost:<PORT>
+docker rm -f tmp-test
+C2: /health route and test
+In app.py:
+python
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok", "user": "<username>"})
+Check that jsonify is imported: from flask import Flask, jsonify.
+In test_app.py (match the style of the existing tests):
+python
+def test_health():
+    client = app.test_client()
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "ok"
+Run it:
+bash
+pip install -r requirements.txt pytest
+pytest
+C3–C5: .gitlab-ci.yml (a template; keep your existing DOCKER_HOST line and tags)
+First create the variable in GitLab under Settings → CI/CD → Variables → Add variable, with key APP_PORT and value your port.
+yaml
+stages:
+  - build
+  - test
+  - deploy
+variables:
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  # keep the DOCKER_HOST line that was provided
+build:
+  stage: build
+  tags: [test2026]
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -t $CI_REGISTRY_IMAGE:$IMAGE_TAG .
+    - docker push $CI_REGISTRY_IMAGE:$IMAGE_TAG
+test:
+  stage: test
+  tags: [test2026]
+  script:
+    - docker run --rm $CI_REGISTRY_IMAGE:$IMAGE_TAG sh -c "pip install pytest && pytest"
+deploy:
+  stage: deploy
+  tags: [test2026]
+  rules:
+    - if: $CI_COMMIT_BRANCH == "test-2026"
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker pull $CI_REGISTRY_IMAGE:$IMAGE_TAG
+    - docker rm -f $CI_PROJECT_NAME || true
+    - docker run -d --name $CI_PROJECT_NAME -p $APP_PORT:5000 $CI_REGISTRY_IMAGE:$IMAGE_TAG
+Commit, push and verify:
+bash
+git add -A
+git commit -m "Fix Dockerfile and CI, add /health and test"
+git push
+Then watch the pipeline under Build → Pipelines, and on ldapgit run:
+bash
+docker ps
+curl localhost:<PORT>/health
+C6: show that a failing test blocks deploy
+bash
+# Break the test, e.g. change 200 to 500 in test_health
+nano test_app.py
+git add -A
+git commit -m "Break test on purpose"
+git push
+# In GitLab: test job fails, deploy job does not run
+# Fix it
+nano test_app.py
+git add -A
+git commit -m "Fix test"
+git push
+# In GitLab: whole pipeline passes
+docker ps
+curl localhost:<PORT>/health
+Leave both pipelines in the history, and make sure the container is still running at 6:30 pm.
+Topic	Command or answer
+Owner-only access	chmod 700 test2026
+Both streams to a file	> out.txt 2>&1
+Last exit status	echo $? (2 means the script failed with status 2)
+Push rejected (remote has new commits)	git pull (or git pull --rebase), then git push
+Undo a pushed commit safely	git revert <commit>, then git push
+Conflict markers	The part above ======= (HEAD) comes from the branch you were on
+Port already allocated	docker ps shows which container holds the port
+Publish a port	docker run -p 33012:5000 ... (EXPOSE alone doesn’t publish it)
+ls -ld showing drwxr-x---	750
+Other answers: Dockerfile layer caching explains the requirements.txt order, Compose uses the service name db as the host name, a stuck pipeline is fixed by matching the runner’s tag (test2026), and secrets belong in masked CI/CD variables.
+Final checklist before time runs out
+bash
+ls ~/test2026                   # answers.sh check_service.sh data repo INFO.txt
+cd ~/test2026/repo && git status && git log --oneline -5
+docker ps
+curl localhost:<PORT>/health
+
